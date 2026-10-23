@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "大肥鱼ultimate",
+  "version": "1.4.2",
+  "description": "从本机大肥鱼搜题读取最新答案，在任意网站高亮/点选选项并填写填空题；不会点击提交按钮。",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "http://127.0.0.1:8765/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "128": "icon.png"
+  }
+}
