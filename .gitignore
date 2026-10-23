@@ -1,0 +1,11 @@
+﻿temp/
+__pycache__/
+*.pyc
+*.pyo
+settings.json
+.spec
+build/
+dist/
+_package*/
+_github_repo/
+release/
