@@ -1,0 +1,46 @@
+大肥鱼搜题 使用说明
+
+一、启动
+双击「大肥鱼搜题.exe」即可运行，不需要安装 Python。
+请保持 exe、_internal 文件夹、题库.csv 在同一个目录，不要单独移动 exe。
+
+二、基本设置
+点右上角「设置」：
+- 监听目录：截图保存的位置，默认是当前用户的 %USERPROFILE%\Pictures\Screenshots
+- 附加目录：当前用户的 %USERPROFILE%\Downloads，只监视新增的 .jpeg
+- 接口地址：模型服务地址；本地 Ollama 为 http://127.0.0.1:11434/v1
+- API Key：需要鉴权的 OpenAI 兼容服务填写；会以 Bearer 方式发送到当前接口
+- 模型名称：例如 qwen3.5-9b、deepseek-flash
+- 识别模式：纯文本模型选「OCR 文字」；视觉模型可选「图片直传」
+
+不同 Windows 用户会自动使用各自的用户目录，不会写死成别人的用户名。
+
+三、题库
+题库.csv 与 exe 放在同一目录，程序会自动读取。
+设置 → 题库可以查看、清空、从 HTML 导入。
+命中题库的题直接使用题库答案；未命中的题才交给模型。
+
+四、浏览器插件高亮
+1. 打开 edge://extensions
+2. 开启「开发人员模式」
+3. 点「加载解压缩的扩展」
+4. 选择 browser-extension 文件夹
+5. 保持大肥鱼搜题运行，打开考试页面
+
+插件只按题号高亮选项，不自动点击。状态显示在页面左下角。
+
+五、目录说明
+大肥鱼搜题.exe       主程序
+_internal\           运行组件，勿删除或改名
+题库.csv             本地题库
+browser-extension\   浏览器插件
+temp\                分析后的截图缓存（自动生成）
+使用说明.txt         本文件
+
+六、数据位置
+设置和 API Key 保存在当前 Windows 用户的：
+%APPDATA%\ScreenshotQA\settings.json
+
+发行包本身不包含这个文件，也不包含任何 API Key。换一个 Windows 用户或另一台电脑运行时，API Key 是空的，需要重新填写。
+
+注意：API Key 是本地明文保存；不要把包含密钥的 settings.json 发给别人。
