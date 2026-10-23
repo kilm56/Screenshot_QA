@@ -1,0 +1,49 @@
+.dfy-correct-option {
+  background: rgba(34, 197, 94, 0.24) !important;
+  outline: 3px solid #22c55e !important;
+  outline-offset: 2px !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.16) !important;
+  transition: background 120ms ease, outline-color 120ms ease, box-shadow 120ms ease;
+}
+
+.dfy-correct-option::after {
+  content: "  ✓";
+  color: #15803d;
+  font-weight: 700;
+}
+
+/* 已经被自动点选的正确答案：颜色更深，方便一眼看出已经选上 */
+.dfy-correct-option-selected {
+  background: rgba(34, 197, 94, 0.4) !important;
+  box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.3) !important;
+}
+
+.dfy-correct-option-selected::after {
+  content: "  ✓ 已选";
+  color: #166534;
+  font-weight: 700;
+}
+
+#dfy-answer-status {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 2147483647;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.9);
+  color: #f9fafb;
+  font: 12px/1.5 "Microsoft YaHei", "Segoe UI", sans-serif;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  transition: background 150ms ease;
+}
+
+#dfy-answer-status[data-tone="warn"] {
+  background: rgba(146, 64, 14, 0.94);
+}
+
+#dfy-answer-status[data-tone="offline"] {
+  background: rgba(127, 29, 29, 0.92);
+}
