@@ -2801,10 +2801,12 @@ class ScreenshotQA(tk.Tk):
         dialog.resizable(False, False)
         dialog.grab_set()
 
-        width, height = 560, 675
+        width, height = 560, 735
         dialog.update_idletasks()
         x = self.winfo_rootx() + max(0, (self.winfo_width() - width) // 2)
-        y = self.winfo_rooty() + 70
+        screen_h = self.winfo_screenheight()
+        height = min(height, max(560, screen_h - 120))
+        y = min(self.winfo_rooty() + 70, max(10, screen_h - height - 50))
         dialog.geometry(f"{width}x{height}+{x}+{y}")
 
         card = self._card(dialog)
@@ -2895,7 +2897,7 @@ class ScreenshotQA(tk.Tk):
             side="left", padx=(6, 0))
 
         note = (
-            f"{self.model} 是纯文本模型时，程序会先用 Windows 自带 OCR 提取截图文字，"
+            "如果当前模型是纯文本模型，程序会先用 Windows 自带 OCR 提取截图文字，"
             "再交给模型回答；如果使用视觉模型，自动检测会优先走数学 OCR，"
             "先把公式转写成文本，再交给模型答题。"
             "切换回答类型会自动换成该类型的默认提问，手动改过的提问不会被覆盖。"
