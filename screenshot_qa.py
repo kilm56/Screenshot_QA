@@ -7,7 +7,7 @@
 * 只监听启动之后新出现的截图，不会把旧图片全部重跑一遍。
 * 小巧的 Tkinter 窗口，支持一键置顶（Ctrl+T）。
 * 零第三方依赖：使用 Windows 自带的 OCR 引擎和标准库 HTTP 客户端。
-* 自动判断模型能力：视觉模型直传图片，纯文本模型（如 qwen3.5-9b）先 OCR 再提问。
+* 自动判断模型能力：视觉模型先做数学 OCR 转写公式，再交给答题模型；纯文本模型（如 qwen3.5-9b）用 Windows OCR。
 * 模型回答流式显示，可随时停止。
 
 运行：python screenshot_qa.py
@@ -136,9 +136,26 @@ OCR_ERRORS = {
 MODE_LABELS = {
     "auto": "自动检测（推荐）",
     "ocr": "OCR 文字（纯文本模型）",
-    "vision": "图片直传（视觉模型）",
+    "vision": "数学 OCR（视觉模型）",
 }
 MODE_BY_LABEL = {v: k for k, v in MODE_LABELS.items()}
+
+MATH_OCR_PROMPT = (
+    "你是一个高等数学 OCR 引擎。请把图片里的题目完整转写为文本，"
+    "数学公式尽量用 LaTeX（行内用 $...$），保留题号、上下标、极限、分式、"
+    "根号、积分、矩阵、选项和填空位置。不要解答、不要总结、不要解释，"
+    "不要遗漏任何公式或选项，只输出转写结果。"
+)
+
+VISION_MODEL_HINTS = (
+    "vl", "vision", "gpt-4o", "gpt-4.1", "gpt-5", "gemini", "claude",
+    "llava", "minicpm-v", "omni", "deepseek-flash",
+)
+
+
+def looks_like_vision_model(model: str) -> bool:
+    name = str(model or "").lower()
+    return any(hint in name for hint in VISION_MODEL_HINTS)
 
 SYSTEM_PROMPTS_OCR = {
     "answer": (
@@ -1609,13 +1626,15 @@ class ScreenshotQA(tk.Tk):
 
     def _mode_text(self) -> str:
         if self.mode == "vision":
-            return f"图片直传 · {self.model}"
+            return f"数学 OCR · {self.model}"
         if self.mode == "ocr":
             return f"OCR 文字 · {self.model}"
         if self.vision_supported is True:
-            return f"图片直传 · {self.model}"
+            return f"数学 OCR · {self.model}"
         if self.vision_supported is False:
             return f"OCR 文字 · {self.model}"
+        if not is_ollama_base(self.base_url) and looks_like_vision_model(self.model):
+            return f"数学 OCR · {self.model}"
         return f"自动 · {self.model}"
 
     def _refresh_mode_text(self) -> None:
@@ -1910,11 +1929,10 @@ class ScreenshotQA(tk.Tk):
             return "ocr"
         if context["mode"] == "vision":
             return "vision"
+        if not is_ollama_base(context["base_url"]):
+            return "vision" if looks_like_vision_model(context["model"]) else "ocr"
         vision = context["vision"]
         if vision is None:
-            if not is_ollama_base(context["base_url"]):
-                context["vision"] = False
-                return "ocr"
             try:
                 vision, capabilities = detect_vision(context["base_url"], context["model"])
                 context["vision"] = vision
@@ -1967,88 +1985,35 @@ class ScreenshotQA(tk.Tk):
     def _worker(self, path: Path, context: dict) -> None:
         try:
             mode = self._resolve_mode(context)
-            bank_count = 0
-            total_count = 0
+            ocr_text = ""
             if mode == "vision":
-                self._ui_queue.put(("stage", "upload", "正在上传截图…"))
-                messages = self._build_vision_messages(
-                    path, context["prompt"], context["answer_type"]
-                )
-                truncated = False
+                self._ui_queue.put(("stage", "upload", "正在用数学 OCR 识别公式…"))
+                messages = self._build_math_ocr_messages(path)
                 try:
-                    answer, thinking, truncated = self._call_model(messages, context)
+                    transcription, _thinking, _truncated = self._call_model(messages, context)
                 except AnalysisError as exc:
                     if self._looks_like_no_vision(str(exc)):
                         context["vision"] = False
                         self._ui_queue.put(("caps", False, []))
-                        mode = "ocr"
                         self._ui_queue.put(("stage", "ocr", "正在用 Windows OCR 识别文字…"))
                         ocr_text = self._ocr_for_prompt(path)
-                        messages = self._build_ocr_messages(
-                            path, ocr_text, context["prompt"], context["answer_type"]
-                        )
-                        self._ui_queue.put(("stage", "model", "模型生成中…"))
-                        answer, thinking, truncated = self._call_model(messages, context)
                     else:
                         raise
+                else:
+                    transcription = transcription.strip()
+                    if transcription:
+                        ocr_text = transcription
+                        self._ui_queue.put(("stage", "ocr", "数学公式转写完成…"))
+                    else:
+                        self._ui_queue.put(("stage", "ocr", "数学 OCR 结果为空，改用 Windows OCR…"))
+                        ocr_text = self._ocr_for_prompt(path)
             else:
                 self._ui_queue.put(("stage", "ocr", "正在用 Windows OCR 识别文字…"))
                 ocr_text = self._ocr_for_prompt(path)
-                if context["answer_type"] == "answer":
-                    matches, _all_matched = self._bank_matches(ocr_text)
-                    numbers = extract_question_numbers(ocr_text)
-                    missing = [number for number in numbers if number not in matches]
-                    bank_count = sum(1 for number in numbers if number in matches)
-                    total_count = len(numbers)
-                    if numbers and not missing:
-                        answer = format_bank_answers(matches)
-                        thinking = ""
-                        truncated = False
-                        self._ui_queue.put(
-                            ("stage", "bank", f"题库命中 {bank_count}/{total_count} 题…")
-                        )
-                    else:
-                        if matches:
-                            self._ui_queue.put((
-                                "stage", "bank",
-                                f"题库命中 {bank_count} 题，模型补答 {len(missing)} 题…",
-                            ))
-                        else:
-                            self._ui_queue.put(("stage", "model", "模型生成中…"))
 
-                        blocks = {
-                            block["number"]: block
-                            for block in extract_question_blocks(ocr_text)
-                        }
-                        missing_text = ""
-                        if numbers and matches:
-                            missing_text = "\n\n".join(
-                                "\n".join(blocks[number]["lines"])
-                                for number in missing
-                                if number in blocks
-                            )
-                        model_text = missing_text or ocr_text
-                        model_prompt = context["prompt"].rstrip()
-                        if numbers:
-                            model_prompt += (
-                                "\n只回答下面列出的题目，严格按“题号. 答案”逐行输出；"
-                                "不要回答未列出的题目，不要解释。"
-                            )
-                        messages = self._build_ocr_messages(
-                            path, model_text, model_prompt, context["answer_type"]
-                        )
-                        answer, thinking, truncated = self._call_model(messages, context)
-                        if numbers:
-                            answer = combine_question_answers(matches, answer, numbers)
-                        elif matches:
-                            answer = apply_bank_overrides(answer, matches)
-                else:
-                    messages = self._build_ocr_messages(
-                        path, ocr_text, context["prompt"], context["answer_type"]
-                    )
-                    self._ui_queue.put(("stage", "model", "模型生成中…"))
-                    answer, thinking, truncated = self._call_model(messages, context)
-
+            answer, thinking, truncated, bank_count, total_count = self._answer_from_text(
+                path, ocr_text, context
+            )
             content_missing = not answer.strip() and bool(thinking.strip())
             if content_missing:
                 answer = thinking
@@ -2066,6 +2031,69 @@ class ScreenshotQA(tk.Tk):
             self._ui_queue.put(("error", f"处理截图时出错：{exc}"))
         finally:
             self._ui_queue.put(("finished",))
+
+    def _answer_from_text(
+        self, path: Path, ocr_text: str, context: dict
+    ) -> tuple[str, str, bool, int, int]:
+        bank_count = 0
+        total_count = 0
+        if context["answer_type"] != "answer":
+            messages = self._build_ocr_messages(
+                path, ocr_text, context["prompt"], context["answer_type"]
+            )
+            self._ui_queue.put(("stage", "model", "模型生成中…"))
+            answer, thinking, truncated = self._call_model(messages, context)
+            return answer, thinking, truncated, bank_count, total_count
+
+        matches, _all_matched = self._bank_matches(ocr_text)
+        numbers = extract_question_numbers(ocr_text)
+        missing = [number for number in numbers if number not in matches]
+        bank_count = sum(1 for number in numbers if number in matches)
+        total_count = len(numbers)
+        if numbers and not missing:
+            answer = format_bank_answers(matches)
+            thinking = ""
+            truncated = False
+            self._ui_queue.put(
+                ("stage", "bank", f"题库命中 {bank_count}/{total_count} 题…")
+            )
+            return answer, thinking, truncated, bank_count, total_count
+
+        if matches:
+            self._ui_queue.put((
+                "stage", "bank",
+                f"题库命中 {bank_count} 题，模型补答 {len(missing)} 题…",
+            ))
+        else:
+            self._ui_queue.put(("stage", "model", "模型生成中…"))
+
+        blocks = {
+            block["number"]: block
+            for block in extract_question_blocks(ocr_text)
+        }
+        missing_text = ""
+        if numbers and matches:
+            missing_text = "\n\n".join(
+                "\n".join(blocks[number]["lines"])
+                for number in missing
+                if number in blocks
+            )
+        model_text = missing_text or ocr_text
+        model_prompt = context["prompt"].rstrip()
+        if numbers:
+            model_prompt += (
+                "\n只回答下面列出的题目，严格按“题号. 答案”逐行输出；"
+                "不要回答未列出的题目，不要解释。"
+            )
+        messages = self._build_ocr_messages(
+            path, model_text, model_prompt, context["answer_type"]
+        )
+        answer, thinking, truncated = self._call_model(messages, context)
+        if numbers:
+            answer = combine_question_answers(matches, answer, numbers)
+        elif matches:
+            answer = apply_bank_overrides(answer, matches)
+        return answer, thinking, truncated, bank_count, total_count
 
     def _ocr_for_prompt(self, path: Path) -> str:
         text = self._ocr_cached(path)
@@ -2108,6 +2136,22 @@ class ScreenshotQA(tk.Tk):
         return [
             {"role": "system", "content": system},
             {"role": "user", "content": user_content},
+        ]
+
+    def _build_math_ocr_messages(self, path: Path) -> list[dict]:
+        data = base64.b64encode(path.read_bytes()).decode("ascii")
+        return [
+            {"role": "system", "content": MATH_OCR_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "请转写这张数学题截图的全部题目和公式。"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_for(path)};base64,{data}"},
+                    },
+                ],
+            },
         ]
 
     def _call_model(self, messages: list[dict], context: dict):
@@ -2852,7 +2896,8 @@ class ScreenshotQA(tk.Tk):
 
         note = (
             f"{self.model} 是纯文本模型时，程序会先用 Windows 自带 OCR 提取截图文字，"
-            "再交给模型回答；如果使用视觉模型，把模式设为“自动检测”即可直接上传图片。"
+            "再交给模型回答；如果使用视觉模型，自动检测会优先走数学 OCR，"
+            "先把公式转写成文本，再交给模型答题。"
             "切换回答类型会自动换成该类型的默认提问，手动改过的提问不会被覆盖。"
             "分析完成后截图会移入 temp 缓存，重新分析从缓存读取。"
         )
